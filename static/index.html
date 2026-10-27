@@ -1,0 +1,454 @@
+<!doctype html>
+<!-- Copyright 2026 YUZUKI. SPDX-License-Identifier: MIT -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>image2multi-view</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --line:#2c3038; --text:#e6e8ec; --muted:#9aa0ab; --accent:#4fa3ff; --draft:#f0b429; --final:#3ddc84; --err:#ff5c5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; }
+  header { display:flex; align-items:center; gap:16px; padding:8px 16px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .status { color:var(--muted); font-size:12px; }
+  header .status.bad { color:var(--err); }
+  main { display:grid; grid-template-columns:320px 1fr; gap:0; height:calc(100vh - 41px); }
+  aside { border-right:1px solid var(--line); background:var(--panel); overflow-y:auto; padding:12px 14px; }
+  section.block { border-bottom:1px solid var(--line); padding:10px 0; }
+  section.block h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 8px; }
+  .drop { border:1px dashed var(--line); border-radius:8px; padding:10px; text-align:center; color:var(--muted); cursor:pointer; }
+  .drop.over { border-color:var(--accent); color:var(--accent); }
+  .drop img { max-width:100%; max-height:140px; display:block; margin:6px auto 0; border-radius:4px; }
+  .axis { display:grid; grid-template-columns:28px 1fr 52px 24px 24px; gap:6px; align-items:center; margin:6px 0; }
+  .axis label { font-weight:600; }
+  .axis input[type=range] { width:100%; }
+  .axis .val { text-align:right; font-variant-numeric:tabular-nums; }
+  .axis button, .row button, button.small { background:#2a2e36; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:2px 6px; cursor:pointer; font-size:12px; }
+  button.primary { background:var(--accent); color:#06182e; border:none; font-weight:600; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; margin:5px 0; flex-wrap:wrap; }
+  .row label { color:var(--muted); min-width:92px; font-size:12px; }
+  select, input[type=number], input[type=text], textarea { background:#121418; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 6px; font:inherit; }
+  input[type=number] { width:90px; }
+  textarea { width:100%; resize:vertical; }
+  .hint { color:var(--muted); font-size:11px; }
+  .content { display:flex; flex-direction:column; min-width:0; overflow:hidden; }
+  .stage { flex:0 0 50%; display:flex; align-items:center; justify-content:center; padding:12px; min-height:0; position:relative; overflow:hidden; }
+  .canvasbox { position:relative; max-width:100%; max-height:100%; }
+  canvas { display:block; background:#0b0c0f; border:1px solid var(--line); border-radius:6px; cursor:grab; touch-action:none; max-width:100%; max-height:100%; }
+  canvas.dragging { cursor:grabbing; }
+  .badge { position:absolute; left:10px; top:10px; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:600; background:rgba(0,0,0,.6); }
+  .badge.draft { color:var(--draft); } .badge.final { color:var(--final); } .badge.source { color:var(--muted); } .badge.err { color:var(--err); }
+  .angles { position:absolute; right:10px; top:10px; font-variant-numeric:tabular-nums; background:rgba(0,0,0,.6); padding:3px 8px; border-radius:4px; font-size:12px; }
+  .progress { position:absolute; left:0; right:0; bottom:0; height:4px; background:transparent; border-radius:0 0 6px 6px; overflow:hidden; }
+  .progress > div { height:100%; width:0; background:var(--accent); transition:width .1s linear; }
+  .lower { flex:1 1 0; border-top:1px solid var(--line); padding:8px 12px; display:grid; grid-template-columns:1fr 300px; gap:12px; min-height:0; }
+  .prompt { display:flex; flex-direction:column; min-height:0; }
+  .prompt textarea { flex:1; min-height:60px; font-size:12px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .history { overflow-y:auto; min-height:0; }
+  .history .items { display:flex; flex-wrap:wrap; gap:6px; }
+  .history img { width:64px; height:64px; object-fit:cover; border-radius:4px; border:2px solid transparent; cursor:pointer; }
+  .history img.final { border-color:var(--final); } .history img.draft { border-color:var(--draft); }
+  .stats { font-size:12px; color:var(--muted); }
+  .stats b { color:var(--text); }
+  .msg { font-size:12px; color:var(--muted); min-height:18px; }
+  .msg.err { color:var(--err); }
+  kbd { background:#2a2e36; border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>image2multi-view</h1>
+  <span class="status" id="serverStatus">サーバー確認中…</span>
+  <span class="hint" style="margin-left:auto">ドラッグ: Y(横)・X(縦)  /  <kbd>Shift</kbd>+ドラッグ・ホイール: Z(回転)  /  矢印キー・<kbd>Q</kbd><kbd>E</kbd></span>
+</header>
+<main>
+<aside>
+  <section class="block">
+    <h2>1. 画像</h2>
+    <div class="drop" id="drop">クリックまたはドロップで画像を選ぶ<img id="srcThumb" hidden></div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <div class="hint" id="srcInfo"></div>
+  </section>
+
+  <section class="block">
+    <h2>2. 視点(10°刻み)</h2>
+    <div class="axis"><label>X</label><input type="range" id="pitch" min="-180" max="180" step="10" value="0"><span class="val" id="pitchVal">0°</span><button data-axis="pitch" data-d="-10">−</button><button data-axis="pitch" data-d="10">+</button></div>
+    <div class="axis"><label>Y</label><input type="range" id="yaw" min="-180" max="180" step="10" value="0"><span class="val" id="yawVal">0°</span><button data-axis="yaw" data-d="-10">−</button><button data-axis="yaw" data-d="10">+</button></div>
+    <div class="axis"><label>Z</label><input type="range" id="roll" min="-180" max="180" step="10" value="0"><span class="val" id="rollVal">0°</span><button data-axis="roll" data-d="-10">−</button><button data-axis="roll" data-d="10">+</button></div>
+    <div class="hint">X: + で上から見下ろす / − で下から見上げる。Y: + で被写体が自分の左を向く(顔は画像右へ)。Z: + で画像が時計回り。</div>
+    <div class="row"><button class="small" id="resetAngles">すべて0°</button><button class="small" id="renderFinalNow">この角度で最終生成</button><button class="small" id="showSource">元画像を表示</button></div>
+  </section>
+
+  <section class="block">
+    <h2>3. 生成</h2>
+    <div class="row"><label>被写体</label><select id="subject"><option value="person">人物・キャラクター</option><option value="object">物体</option></select></div>
+    <div class="row"><label>構図</label><select id="framing"><option value="same">元画像と同じ</option><option value="full">全身・全体</option><option value="closeup">クローズアップ</option></select></div>
+    <div class="row"><label>シード</label><input type="number" id="seed" value="42" min="0" max="4294967295"><button class="small" id="randSeed">🎲</button></div>
+    <div class="row"><label>ドラフト</label><select id="draftSide"><option value="256">256² 最速</option><option value="384">384²</option><option value="448">448²</option><option value="512" selected>512² 標準</option><option value="640">640²</option></select>
+      <select id="draftSteps" title="ドラフトの推論ステップ数"><option value="4">4 step</option><option value="6">6 step</option><option value="8" selected>8 step</option><option value="12">12 step</option><option value="16">16 step</option></select></div>
+    <div class="hint" id="stepsHint"></div>
+    <div class="row"><label>最終サイズ</label><select id="finalSize"><option value="source">元画像(≤1MP)</option><option value="768">長辺768</option><option value="1024">長辺1024</option><option value="1536">長辺1536(2K)</option><option value="2048">長辺2048(2K)</option></select></div>
+    <div class="row"><label>Z軸の扱い</label><select id="rollMode"><option value="prompt">プロンプトで指定(再生成)</option><option value="canvas">キャンバス回転(即時・正確)</option></select></div>
+    <div class="row"><label>最終でupsampler</label><input type="checkbox" id="upsample"><select id="upsampler"><option value="">auto</option><option value="remote">remote</option><option value="local">local</option><option value="pup-gguf">pup-gguf</option><option value="pup-int8">pup-int8</option></select></div>
+    <div class="hint">upsamplerはLLMでキャプションを書き直すので数秒〜数十秒かかり、角度の指示が変わることもあります。ドラフトは常にバイパスします。</div>
+    <div class="row"><label>追加の指示</label></div>
+    <textarea id="extra" rows="2" placeholder="例: plain white studio background"></textarea>
+    <div class="row"><label>自動生成</label><input type="checkbox" id="auto" checked> <span class="hint">動かすとドラフト</span></div>
+    <div class="row"><label title="マウスを離してから">離して最終</label><input type="checkbox" id="autoFinal" checked> <input type="number" id="idleMs" value="500" min="100" step="100" style="width:70px"> <span class="hint">ms</span></div>
+  </section>
+
+  <section class="block">
+    <h2>状態</h2>
+    <div class="msg" id="msg">画像を選んでください</div>
+    <div class="stats" id="stats"></div>
+  </section>
+</aside>
+
+<div class="content">
+  <div class="stage">
+    <div class="canvasbox">
+      <canvas id="canvas" width="768" height="768"></canvas>
+      <div class="badge source" id="badge">元画像なし</div>
+      <div class="angles" id="anglesBadge">X 0° / Y 0° / Z 0°</div>
+      <div class="progress"><div id="bar"></div></div>
+    </div>
+  </div>
+  <div class="lower">
+    <div class="prompt">
+      <div class="row"><label style="min-width:auto">プロンプト(モデルに渡す英文キャプション)</label><button class="small" id="copyPrompt">コピー</button><button class="small" id="download">画像を保存</button><span class="hint" id="normInfo"></span></div>
+      <textarea id="prompt" readonly></textarea>
+    </div>
+    <div class="history"><div class="hint">履歴(緑=最終、黄=ドラフト、クリックで角度を戻す)</div><div class="items" id="history"></div></div>
+  </div>
+</div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const AXES = ['pitch', 'yaw', 'roll'];
+  const PX_PER_STEP = 7;                         // pixels of drag per 10 degrees
+  const snap = v => { v = Math.round(v / 10) * 10; v = ((v + 180) % 360 + 360) % 360 - 180; return v === -180 ? 180 : v; };
+
+  const state = {
+    sid: null, src: null, srcImg: null,
+    angles: { pitch: 0, yaw: 0, roll: 0 },
+    inflight: null,            // {id, mode, angles, cancelled}
+    pendingDraft: false,
+    finalWanted: false,
+    idleTimer: null,
+    interacting: false,        // mouse button held on the canvas or a slider: drafts only, no final
+    shown: null,               // {img, mode, w, h, seconds, angles, url}
+    draftTimes: [], lastFinal: null,
+    promptTimer: null,
+  };
+
+  // ---------------------------------------------------------------- settings
+  const settings = () => ({
+    subject: $('subject').value, framing: $('framing').value, extra: $('extra').value,
+    seed: Math.max(0, parseInt($('seed').value || '0', 10) || 0),
+    draft_side: parseInt($('draftSide').value, 10), draft_steps: parseInt($('draftSteps').value, 10), final_size: $('finalSize').value,
+    roll_in_prompt: $('rollMode').value === 'prompt',
+    upsample: $('upsample').checked, upsampler: $('upsampler').value || null,
+  });
+  const anglesKey = (a, s) => `${a.pitch},${a.yaw},${s.roll_in_prompt ? a.roll : 0}`;
+
+  // ---------------------------------------------------------------- UI helpers
+  function msg(text, err) { const m = $('msg'); m.textContent = text; m.classList.toggle('err', !!err); }
+  function badge(text, cls) { const b = $('badge'); b.textContent = text; b.className = 'badge ' + cls; }
+  function stats() {
+    const d = state.draftTimes.slice(-10);
+    const avg = d.length ? (d.reduce((a, b) => a + b, 0) / d.length).toFixed(2) : '-';
+    const last = d.length ? d[d.length - 1].toFixed(2) : '-';
+    $('stats').innerHTML = `ドラフト: 直近 <b>${last}s</b>、平均 <b>${avg}s</b>(${state.draftTimes.length}回)<br>最終: <b>${state.lastFinal != null ? state.lastFinal.toFixed(2) + 's' : '-'}</b>`;
+  }
+  function updateAngleUI() {
+    for (const ax of AXES) { $(ax).value = state.angles[ax]; $(ax + 'Val').textContent = state.angles[ax] + '°'; }
+    $('anglesBadge').textContent = `X ${state.angles.pitch}° / Y ${state.angles.yaw}° / Z ${state.angles.roll}°`;
+  }
+
+  // ---------------------------------------------------------------- canvas
+  const canvas = $('canvas'), ctx = canvas.getContext('2d');
+  function fitCanvas() {
+    const stage = canvas.parentElement.parentElement;
+    canvas.style.width = '0px'; canvas.style.height = '0px';   // measure the stage without the canvas inflating it
+    const maxW = stage.clientWidth - 24, maxH = stage.clientHeight - 24;
+    const ar = state.src ? state.src.width / state.src.height : 1;
+    let w = maxW, h = w / ar;
+    if (h > maxH) { h = maxH; w = h * ar; }
+    canvas.style.width = Math.floor(w) + 'px'; canvas.style.height = Math.floor(h) + 'px';
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(w * dpr); canvas.height = Math.floor(h * dpr);
+    draw();
+  }
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const img = state.shown ? state.shown.img : state.srcImg;
+    if (!img) return;
+    const rollCanvas = $('rollMode').value === 'canvas' ? state.angles.roll : 0;
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(rollCanvas * Math.PI / 180);
+    // Generated images are snapped to multiples of 32 px, so their aspect ratio can differ from the source by a
+    // few percent. The canvas keeps the source aspect; fill it rather than letterboxing (the stretch is invisible).
+    const w = canvas.width, h = canvas.height;
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+  window.addEventListener('resize', fitCanvas);
+
+  function loadImage(url) {
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+  }
+
+  // ---------------------------------------------------------------- upload
+  const drop = $('drop');
+  drop.addEventListener('click', () => $('file').click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+  $('file').addEventListener('change', e => { if (e.target.files[0]) upload(e.target.files[0]); });
+  document.addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])][0]; if (f) upload(f); });
+
+  async function upload(file) {
+    msg('アップロード中…');
+    const fd = new FormData(); fd.append('image', file);
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    if (!r.ok) { msg('アップロード失敗: ' + (await r.text()), true); return; }
+    const info = await r.json();
+    await setSession(info);
+    localStorage.setItem('mv.session', JSON.stringify({ id: info.id }));
+  }
+  async function setSession(info) {
+    cancelInflight();
+    state.sid = info.id; state.src = info; state.shown = null;
+    state.srcImg = await loadImage(info.source_url);
+    $('srcThumb').src = info.source_url; $('srcThumb').hidden = false;
+    const ds = info.draft_sizes[$('draftSide').value], fs = info.final_sizes[$('finalSize').value];
+    $('srcInfo').textContent = `${info.width}×${info.height}  ドラフト ${ds[0]}×${ds[1]} / 最終 ${fs[0]}×${fs[1]}`;
+    badge('元画像', 'source');
+    fitCanvas();
+    msg('ドラッグまたはスライダーで視点を動かしてください');
+    refreshPrompt();
+    refreshHistory();
+    history.replaceState(null, '', '?session=' + info.id);
+  }
+  function updateSizeInfo() {
+    if (!state.src) return;
+    const ds = state.src.draft_sizes[$('draftSide').value], fs = state.src.final_sizes[$('finalSize').value];
+    $('srcInfo').textContent = `${state.src.width}×${state.src.height}  ドラフト ${ds[0]}×${ds[1]} / 最終 ${fs[0]}×${fs[1]}`;
+  }
+
+  // ---------------------------------------------------------------- angles
+  function setAngles(partial) {
+    let changed = false;
+    for (const ax of AXES) if (partial[ax] !== undefined) { const v = snap(partial[ax]); if (v !== state.angles[ax]) { state.angles[ax] = v; changed = true; } }
+    if (!changed) return;
+    updateAngleUI();
+    onAnglesChanged();
+  }
+  for (const ax of AXES) $(ax).addEventListener('input', e => setAngles({ [ax]: parseInt(e.target.value, 10) }));
+  document.querySelectorAll('.axis button').forEach(b => b.addEventListener('click', () => setAngles({ [b.dataset.axis]: state.angles[b.dataset.axis] + parseInt(b.dataset.d, 10) })));
+  $('resetAngles').addEventListener('click', () => setAngles({ pitch: 0, yaw: 0, roll: 0 }));
+  $('showSource').addEventListener('click', () => { state.shown = null; badge('元画像', 'source'); draw(); });
+  $('randSeed').addEventListener('click', () => { $('seed').value = Math.floor(Math.random() * 4294967295); onSettingsChanged(); });
+  for (const id of ['subject', 'framing', 'seed', 'draftSide', 'draftSteps', 'finalSize', 'rollMode', 'upsample', 'upsampler', 'extra']) {
+    $(id).addEventListener('change', onSettingsChanged);
+  }
+  $('rollMode').addEventListener('change', draw);
+  function onSettingsChanged() { updateSizeInfo(); refreshPrompt(); onAnglesChanged(); }
+
+  // drag on canvas: dx -> yaw, dy -> pitch, shift+dx -> roll; wheel -> roll
+  let drag = null;
+  canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, ax: 0, ay: 0 }; canvas.setPointerCapture(e.pointerId); canvas.classList.add('dragging'); beginInteraction(); });
+  canvas.addEventListener('pointermove', e => {
+    if (!drag) return;
+    drag.ax += e.clientX - drag.x; drag.ay += e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+    const sx = Math.trunc(drag.ax / PX_PER_STEP), sy = Math.trunc(drag.ay / PX_PER_STEP);
+    if (!sx && !sy) return;
+    drag.ax -= sx * PX_PER_STEP; drag.ay -= sy * PX_PER_STEP;
+    if (e.shiftKey) setAngles({ roll: state.angles.roll + sx * 10 });
+    else setAngles({ yaw: state.angles.yaw + sx * 10, pitch: state.angles.pitch + sy * 10 });
+  });
+  const endDrag = () => { drag = null; canvas.classList.remove('dragging'); endInteraction(); };
+  canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('wheel', e => { e.preventDefault(); setAngles({ roll: state.angles.roll + (e.deltaY > 0 ? 10 : -10) }); }, { passive: false });
+  document.addEventListener('keydown', e => {
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+    const k = e.key.toLowerCase();
+    const map = { arrowleft: { yaw: -10 }, arrowright: { yaw: 10 }, arrowup: { pitch: -10 }, arrowdown: { pitch: 10 }, q: { roll: -10 }, e: { roll: 10 } };
+    const m = map[k]; if (!m) return;
+    e.preventDefault(); const ax = Object.keys(m)[0]; setAngles({ [ax]: state.angles[ax] + m[ax] });
+  });
+
+  // ---------------------------------------------------------------- prompt preview
+  function refreshPrompt() {
+    clearTimeout(state.promptTimer);
+    state.promptTimer = setTimeout(async () => {
+      const s = settings();
+      const q = new URLSearchParams({ yaw: state.angles.yaw, pitch: state.angles.pitch, roll: state.angles.roll, subject: s.subject, framing: s.framing, extra: s.extra, roll_in_prompt: s.roll_in_prompt });
+      const r = await fetch('/api/prompt?' + q);
+      if (!r.ok) return;
+      const j = await r.json();
+      $('prompt').value = j.prompt;
+      const folded = (j.yaw !== state.angles.yaw || j.pitch !== state.angles.pitch || j.roll !== state.angles.roll);
+      $('normInfo').textContent = folded ? `(Xが±90°を超えるため、同じ視点を Y ${j.yaw}° / X ${j.pitch}° / Z ${j.roll}° として記述)` : '';
+    }, 80);
+  }
+  $('copyPrompt').addEventListener('click', () => navigator.clipboard.writeText($('prompt').value));
+  $('download').addEventListener('click', () => {
+    const src = state.shown ? state.shown.url : (state.src && state.src.source_url);
+    if (!src) return;
+    const a = document.createElement('a'); a.href = src;
+    a.download = state.shown ? `view_X${state.angles.pitch}_Y${state.angles.yaw}_Z${state.angles.roll}_${state.shown.mode}.png` : 'source.png';
+    a.click();
+  });
+
+  // ---------------------------------------------------------------- render pipeline
+  function onAnglesChanged() {
+    refreshPrompt();
+    if (!state.sid) return;
+    if ($('rollMode').value === 'canvas') draw();     // roll is in-plane: redraw instantly
+    state.finalWanted = false;
+    clearTimeout(state.idleTimer);
+    if (!$('auto').checked) return;
+    if (state.inflight && state.inflight.mode === 'final') cancelInflight();  // the camera moved: stop the big render
+    if (state.inflight) state.pendingDraft = true; else startRender('draft');
+    if (!state.interacting) scheduleFinal();   // keys / buttons: final after the idle delay
+  }
+  // The final render is only scheduled once the mouse is released (or after a key/button change).
+  function scheduleFinal() {
+    clearTimeout(state.idleTimer);
+    if (!state.sid || !$('auto').checked || !$('autoFinal').checked) return;
+    state.idleTimer = setTimeout(() => { state.finalWanted = true; tryStartFinal(); }, Math.max(100, parseInt($('idleMs').value, 10) || 500));
+  }
+  function beginInteraction() { state.interacting = true; state.finalWanted = false; clearTimeout(state.idleTimer); }
+  function endInteraction() {
+    if (!state.interacting) return;
+    state.interacting = false;
+    // Only schedule if this drag actually produced a new view that has no final yet.
+    if (!state.shown || state.shown.mode !== 'final' || anglesKey(state.shown.angles, settings()) !== anglesKey(state.angles, settings())) scheduleFinal();
+  }
+  for (const ax of AXES) {
+    $(ax).addEventListener('pointerdown', beginInteraction);
+    $(ax).addEventListener('pointerup', endInteraction);
+    $(ax).addEventListener('pointercancel', endInteraction);
+  }
+  function tryStartFinal() {
+    if (!state.finalWanted || state.inflight || state.pendingDraft) return;
+    state.finalWanted = false;
+    startRender('final');
+  }
+  $('renderFinalNow').addEventListener('click', () => { if (!state.sid) return; clearTimeout(state.idleTimer); if (state.inflight) cancelInflight(); state.pendingDraft = false; startRender('final'); });
+
+  async function cancelInflight() {
+    const j = state.inflight; if (!j) return;
+    j.cancelled = true; state.inflight = null;
+    if (j.id && !j.id.startsWith('cached-')) fetch(`/api/render/${j.id}/cancel`, { method: 'POST' }).catch(() => {});
+  }
+
+  async function startRender(mode) {
+    const s = settings();
+    const angles = { ...state.angles };
+    const body = { session: state.sid, yaw: angles.yaw, pitch: angles.pitch, roll: angles.roll, mode, ...s };
+    const job = { id: null, mode, angles, cancelled: false, t0: performance.now() };
+    state.inflight = job;
+    badge(mode === 'draft' ? 'DRAFT 生成中…' : 'FINAL 生成中…', mode);
+    msg(mode === 'draft' ? 'ドラフトを生成中…' : '最終画像を生成中…');
+    let r;
+    try {
+      r = await fetch('/api/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    } catch (e) { msg('サーバーに接続できません', true); if (state.inflight === job) state.inflight = null; return; }
+    if (!r.ok) { msg(`生成の依頼に失敗(${r.status}): ` + (await r.text()).slice(0, 200), true); if (state.inflight === job) state.inflight = null; return; }
+    let j = await r.json();
+    job.id = j.id;
+    while (j.status !== 'done' && j.status !== 'error' && j.status !== 'cancelled') {
+      if (job.cancelled) return;
+      await new Promise(res => setTimeout(res, mode === 'draft' ? 80 : 150));
+      if (job.cancelled) return;
+      const pr = await fetch(`/api/render/${job.id}`);
+      if (!pr.ok) break;
+      j = await pr.json();
+      $('bar').style.width = j.steps ? (100 * j.step / j.steps) + '%' : '0%';
+      msg(`${mode === 'draft' ? 'ドラフト' : '最終'}: ${j.message || j.status} (${j.step}/${j.steps})`);
+    }
+    $('bar').style.width = '0%';
+    if (job.cancelled) return;
+    if (state.inflight === job) state.inflight = null;
+    const wall = (performance.now() - job.t0) / 1000;
+    if (j.status === 'done') {
+      const stale = anglesKey(job.angles, s) !== anglesKey(state.angles, settings());
+      // Show the result unless something newer is already on screen for the current angles.
+      const shownIsCurrent = state.shown && anglesKey(state.shown.angles, s) === anglesKey(state.angles, settings());
+      if (!stale || !shownIsCurrent) {
+        const img = await loadImage(j.image_url + '?k=' + j.key);
+        state.shown = { img, mode, w: j.width, h: j.height, seconds: j.seconds, angles: job.angles, url: j.image_url };
+        draw();
+        const t = j.cached ? 'キャッシュ' : `${(j.seconds || wall).toFixed(2)}s`;
+        badge(`${mode === 'draft' ? 'DRAFT' : 'FINAL'} ${j.width}×${j.height} · ${j.gen_steps || 16}step · ${t}${stale ? ' (古い角度)' : ''}`, mode);
+      }
+      if (!j.cached) { if (mode === 'draft') state.draftTimes.push(j.seconds || wall); else state.lastFinal = j.seconds || wall; stats(); }
+      msg(j.warning ? '警告: ' + j.warning : (mode === 'draft' ? `ドラフト完了 ${(wall).toFixed(2)}s(壁時計)` : `最終画像 完了 ${(wall).toFixed(2)}s(壁時計)`));
+      if (mode === 'final' && !j.cached) refreshHistory();
+    } else if (j.status === 'error') {
+      msg('エラー: ' + (j.error || j.message), true); badge('エラー', 'err');
+    }
+    if (state.pendingDraft) {
+      state.pendingDraft = false;
+      if (anglesKey(state.angles, settings()) !== anglesKey(job.angles, s) || mode !== 'draft') { startRender('draft'); return; }
+    }
+    tryStartFinal();
+  }
+
+  // ---------------------------------------------------------------- history
+  async function refreshHistory() {
+    if (!state.sid) return;
+    const r = await fetch(`/api/sessions/${state.sid}/views`); if (!r.ok) return;
+    const { items } = await r.json();
+    const box = $('history'); box.innerHTML = '';
+    for (const it of items.slice(0, 80)) {
+      const im = document.createElement('img'); im.src = it.image_url; im.className = it.mode; im.title = `X ${it.pitch}° Y ${it.yaw}° Z ${it.roll}° ${it.width}×${it.height} ${it.mode}`;
+      im.addEventListener('click', async () => {
+        clearTimeout(state.idleTimer); cancelInflight(); state.pendingDraft = false;
+        state.angles = { pitch: it.pitch, yaw: it.yaw, roll: it.roll }; updateAngleUI(); refreshPrompt();
+        const img = await loadImage(it.image_url);
+        state.shown = { img, mode: it.mode, w: it.width, h: it.height, seconds: it.seconds, angles: { ...state.angles }, url: it.image_url };
+        draw(); badge(`${it.mode === 'draft' ? 'DRAFT' : 'FINAL'} ${it.width}×${it.height} · 履歴`, it.mode);
+      });
+      box.appendChild(im);
+    }
+  }
+
+  // ---------------------------------------------------------------- boot
+  async function boot() {
+    try {
+      const h = await (await fetch('/api/health')).json();
+      const el = $('serverStatus');
+      if (h.klein.ok) {
+        el.textContent = `生成サーバー ${h.klein_url}: ${h.klein.loaded ? 'モデル読み込み済み' : 'モデル未読み込み(初回は数秒かかる)'}`;
+        if (!h.klein.steps_supported) { $('stepsHint').textContent = '生成サーバーが steps 引数に未対応のため、ドラフトも16 stepで生成します(flux3-klein-studio を更新後に再起動してください)。'; }
+      }
+      else { el.textContent = `生成サーバー ${h.klein_url} に接続できません: ${h.klein.error}`; el.classList.add('bad'); }
+    } catch { $('serverStatus').textContent = 'サーバーに接続できません'; }
+    try {
+      const q = new URLSearchParams(location.search);
+      const saved = JSON.parse(localStorage.getItem('mv.session') || 'null');
+      const sid = q.get('session') || (saved && saved.id);
+      if (sid) {
+        const r = await fetch('/api/upload-info/' + sid);
+        if (r.ok) {
+          await setSession(await r.json()); localStorage.setItem('mv.session', JSON.stringify({ id: sid }));
+          if (q.has('x') || q.has('y') || q.has('z')) setAngles({ pitch: +q.get('x') || 0, yaw: +q.get('y') || 0, roll: +q.get('z') || 0 });
+          return;
+        }
+      }
+    } catch { /* no saved session */ }
+    fitCanvas(); updateAngleUI(); stats();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
